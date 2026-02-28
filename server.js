@@ -7,24 +7,10 @@ const NodeCache = require("node-cache");
 const app   = express();
 const cache = new NodeCache({ stdTTL: 3600 });
 
-// ─────────────────────────────────────────────
-// CORS
-// ─────────────────────────────────────────────
-const ALLOWED_ORIGINS = [
-  "http://localhost:3000",
-  "http://localhost:5500",
-  "http://127.0.0.1:5500",
-  process.env.FRONTEND_URL,
-].filter(Boolean);
 
-app.use(cors({
-  origin: (origin, callback) => {
-    if (!origin || ALLOWED_ORIGINS.includes(origin)) return callback(null, true);
-    callback(new Error(`CORS blocked: ${origin}`));
-  },
-  methods: ["GET", "OPTIONS"],
-  allowedHeaders: ["Content-Type"],
-}));
+// ─────────────────────────────────────────────
+// CORS — open to all origins
+// ─────────────────────────────────────────────
 app.use(cors());
 
 app.use(express.json());
