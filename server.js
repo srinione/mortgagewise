@@ -25,6 +25,7 @@ app.use(cors({
   methods: ["GET", "OPTIONS"],
   allowedHeaders: ["Content-Type"],
 }));
+app.use(cors());
 
 app.use(express.json());
 
