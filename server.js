@@ -234,6 +234,80 @@ app.get("/api/rates/summary", async (req, res) => {
   }
 });
 
+// ── /api/rates/today — Bankrate-style full daily rates table
+app.get("/api/rates/today", async (req, res) => {
+  try {
+    const cached = cache.get("today_rates");
+    if (cached) return res.json(cached);
+
+    const [r30, r15, rArm, t10, fedFunds, prime] = await Promise.all([
+      fetchFredSeries(FRED_SERIES.rate_30yr),
+      fetchFredSeries(FRED_SERIES.rate_15yr),
+      fetchFredSeries(FRED_SERIES.rate_arm51),
+      fetchFredSeries(FRED_SERIES.treasury10),
+      fetchFredSeries(FRED_SERIES.fed_funds),
+      fetchFredSeries(FRED_SERIES.prime_rate),
+    ]);
+
+    const b = r30.value;
+    const pmt = (principal, rate, years) => {
+      const r = rate/100/12, n = years*12;
+      return r > 0 ? principal*(r*Math.pow(1+r,n))/(Math.pow(1+r,n)-1) : principal/n;
+    };
+    const loan = 320000; // $400k home, 20% down
+
+    const rows = [
+      { type:"30-Year Fixed",      rate: b,                         term:30, apr:+(b+0.14).toFixed(2),              points:0.7, category:"fixed", minDown:"3%",   minCredit:620 },
+      { type:"20-Year Fixed",      rate:+(b-0.25).toFixed(2),       term:20, apr:+(b-0.25+0.12).toFixed(2),         points:0.6, category:"fixed", minDown:"5%",   minCredit:620 },
+      { type:"15-Year Fixed",      rate: r15.value,                 term:15, apr:+(r15.value+0.11).toFixed(2),      points:0.6, category:"fixed", minDown:"3%",   minCredit:620 },
+      { type:"10-Year Fixed",      rate:+(b-0.50).toFixed(2),       term:10, apr:+(b-0.50+0.10).toFixed(2),         points:0.5, category:"fixed", minDown:"5%",   minCredit:620 },
+      { type:"5/1 ARM",            rate: rArm.value,                term:30, apr:+(rArm.value+0.12).toFixed(2),     points:0.5, category:"arm",   minDown:"5%",   minCredit:640 },
+      { type:"7/1 ARM",            rate:+(b-0.40).toFixed(2),       term:30, apr:+(b-0.40+0.11).toFixed(2),         points:0.5, category:"arm",   minDown:"5%",   minCredit:640 },
+      { type:"10/1 ARM",           rate:+(b-0.20).toFixed(2),       term:30, apr:+(b-0.20+0.10).toFixed(2),         points:0.4, category:"arm",   minDown:"5%",   minCredit:640 },
+      { type:"30-Year FHA",        rate:+(b-0.25).toFixed(2),       term:30, apr:+(b-0.25+0.15).toFixed(2),         points:0.5, category:"fha",   minDown:"3.5%", minCredit:580 },
+      { type:"15-Year FHA",        rate:+(r15.value-0.20).toFixed(2),term:15,apr:+(r15.value-0.20+0.14).toFixed(2),points:0.4, category:"fha",   minDown:"3.5%", minCredit:580 },
+      { type:"30-Year VA",         rate:+(b-0.50).toFixed(2),       term:30, apr:+(b-0.50+0.10).toFixed(2),         points:0.3, category:"va",    minDown:"0%",   minCredit:580 },
+      { type:"15-Year VA",         rate:+(r15.value-0.40).toFixed(2),term:15,apr:+(r15.value-0.40+0.09).toFixed(2),points:0.3, category:"va",    minDown:"0%",   minCredit:580 },
+      { type:"30-Year USDA",       rate:+(b-0.30).toFixed(2),       term:30, apr:+(b-0.30+0.12).toFixed(2),         points:0.4, category:"usda",  minDown:"0%",   minCredit:580 },
+      { type:"30-Year Jumbo",      rate:+(b+0.25).toFixed(2),       term:30, apr:+(b+0.25+0.15).toFixed(2),         points:0.8, category:"jumbo", minDown:"10%",  minCredit:700 },
+      { type:"15-Year Jumbo",      rate:+(r15.value+0.15).toFixed(2),term:15,apr:+(r15.value+0.15+0.13).toFixed(2),points:0.7, category:"jumbo", minDown:"10%",  minCredit:700 },
+      { type:"30-Year Fixed Refi", rate:+(b+0.10).toFixed(2),       term:30, apr:+(b+0.10+0.14).toFixed(2),         points:0.6, category:"refi",  minDown:"—",    minCredit:620 },
+      { type:"15-Year Fixed Refi", rate:+(r15.value+0.10).toFixed(2),term:15,apr:+(r15.value+0.10+0.12).toFixed(2),points:0.5, category:"refi",  minDown:"—",    minCredit:620 },
+      { type:"Cash-Out Refi",      rate:+(b+0.30).toFixed(2),       term:30, apr:+(b+0.30+0.16).toFixed(2),         points:0.7, category:"refi",  minDown:"—",    minCredit:640 },
+    ];
+
+    const enriched = rows.map(r => ({
+      ...r,
+      monthlyPayment: +pmt(loan, r.rate, r.term).toFixed(2),
+      weekChange: r.type.includes("30-Year Fixed") && !r.type.includes("Refi") && !r.type.includes("FHA") && !r.type.includes("VA") && !r.type.includes("USDA") && !r.type.includes("Jumbo") ? (r30.change||0) : r.type.includes("15-Year Fixed") && !r.type.includes("Jumbo") && !r.type.includes("FHA") && !r.type.includes("VA") ? (r15.change||0) : r.type.includes("ARM") ? (rArm.change||0) : null,
+    }));
+
+    const history7 = (r30.history || []).slice(0, 8).map(h => ({ date: h.date, value: h.value })).reverse();
+
+    const response = {
+      source:    HAS_KEY ? "Federal Reserve (FRED) / Freddie Mac" : "Built-in rates",
+      live:      HAS_KEY,
+      updatedAt: new Date().toISOString(),
+      asOf:      r30.date,
+      summary: {
+        rate30yr:  { value: b,              change: r30.change    },
+        rate15yr:  { value: r15.value,      change: r15.change    },
+        rateArm:   { value: rArm.value,     change: rArm.change   },
+        treasury:  { value: t10.value,      change: t10.change    },
+        fedFunds:  { value: fedFunds.value, change: fedFunds.change },
+      },
+      rates: enriched,
+      history7,
+    };
+
+    cache.set("today_rates", response, 3600);
+    res.json(response);
+  } catch (err) {
+    console.error("GET /api/rates/today error:", err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // ── /api/rates/:type
 app.get("/api/rates/:type", async (req, res) => {
   const typeMap = {
@@ -315,80 +389,6 @@ app.get("/api/refinance", (req, res) => {
     breakeven: { months:beMo, years:beMo?+(beMo/12).toFixed(1):null, worth_it:beMo?beMo<parseFloat(new_term)*12:false },
     lifetime:  { interest_savings:+intSave.toFixed(2), net_savings_after_costs:+(intSave-parseFloat(closing_costs)).toFixed(2) },
   });
-});
-
-// ── /api/rates/today — Bankrate-style full daily rates table
-app.get("/api/rates/today", async (req, res) => {
-  try {
-    const cached = cache.get("today_rates");
-    if (cached) return res.json(cached);
-
-    const [r30, r15, rArm, t10, fedFunds, prime] = await Promise.all([
-      fetchFredSeries(FRED_SERIES.rate_30yr),
-      fetchFredSeries(FRED_SERIES.rate_15yr),
-      fetchFredSeries(FRED_SERIES.rate_arm51),
-      fetchFredSeries(FRED_SERIES.treasury10),
-      fetchFredSeries(FRED_SERIES.fed_funds),
-      fetchFredSeries(FRED_SERIES.prime_rate),
-    ]);
-
-    const b = r30.value;
-    const pmt = (principal, rate, years) => {
-      const r = rate/100/12, n = years*12;
-      return r > 0 ? principal*(r*Math.pow(1+r,n))/(Math.pow(1+r,n)-1) : principal/n;
-    };
-    const loan = 320000; // $400k home, 20% down
-
-    const rows = [
-      { type:"30-Year Fixed",      rate: b,                         term:30, apr:+(b+0.14).toFixed(2),              points:0.7, category:"fixed", minDown:"3%",   minCredit:620 },
-      { type:"20-Year Fixed",      rate:+(b-0.25).toFixed(2),       term:20, apr:+(b-0.25+0.12).toFixed(2),         points:0.6, category:"fixed", minDown:"5%",   minCredit:620 },
-      { type:"15-Year Fixed",      rate: r15.value,                 term:15, apr:+(r15.value+0.11).toFixed(2),      points:0.6, category:"fixed", minDown:"3%",   minCredit:620 },
-      { type:"10-Year Fixed",      rate:+(b-0.50).toFixed(2),       term:10, apr:+(b-0.50+0.10).toFixed(2),         points:0.5, category:"fixed", minDown:"5%",   minCredit:620 },
-      { type:"5/1 ARM",            rate: rArm.value,                term:30, apr:+(rArm.value+0.12).toFixed(2),     points:0.5, category:"arm",   minDown:"5%",   minCredit:640 },
-      { type:"7/1 ARM",            rate:+(b-0.40).toFixed(2),       term:30, apr:+(b-0.40+0.11).toFixed(2),         points:0.5, category:"arm",   minDown:"5%",   minCredit:640 },
-      { type:"10/1 ARM",           rate:+(b-0.20).toFixed(2),       term:30, apr:+(b-0.20+0.10).toFixed(2),         points:0.4, category:"arm",   minDown:"5%",   minCredit:640 },
-      { type:"30-Year FHA",        rate:+(b-0.25).toFixed(2),       term:30, apr:+(b-0.25+0.15).toFixed(2),         points:0.5, category:"fha",   minDown:"3.5%", minCredit:580 },
-      { type:"15-Year FHA",        rate:+(r15.value-0.20).toFixed(2),term:15,apr:+(r15.value-0.20+0.14).toFixed(2),points:0.4, category:"fha",   minDown:"3.5%", minCredit:580 },
-      { type:"30-Year VA",         rate:+(b-0.50).toFixed(2),       term:30, apr:+(b-0.50+0.10).toFixed(2),         points:0.3, category:"va",    minDown:"0%",   minCredit:580 },
-      { type:"15-Year VA",         rate:+(r15.value-0.40).toFixed(2),term:15,apr:+(r15.value-0.40+0.09).toFixed(2),points:0.3, category:"va",    minDown:"0%",   minCredit:580 },
-      { type:"30-Year USDA",       rate:+(b-0.30).toFixed(2),       term:30, apr:+(b-0.30+0.12).toFixed(2),         points:0.4, category:"usda",  minDown:"0%",   minCredit:580 },
-      { type:"30-Year Jumbo",      rate:+(b+0.25).toFixed(2),       term:30, apr:+(b+0.25+0.15).toFixed(2),         points:0.8, category:"jumbo", minDown:"10%",  minCredit:700 },
-      { type:"15-Year Jumbo",      rate:+(r15.value+0.15).toFixed(2),term:15,apr:+(r15.value+0.15+0.13).toFixed(2),points:0.7, category:"jumbo", minDown:"10%",  minCredit:700 },
-      { type:"30-Year Fixed Refi", rate:+(b+0.10).toFixed(2),       term:30, apr:+(b+0.10+0.14).toFixed(2),         points:0.6, category:"refi",  minDown:"—",    minCredit:620 },
-      { type:"15-Year Fixed Refi", rate:+(r15.value+0.10).toFixed(2),term:15,apr:+(r15.value+0.10+0.12).toFixed(2),points:0.5, category:"refi",  minDown:"—",    minCredit:620 },
-      { type:"Cash-Out Refi",      rate:+(b+0.30).toFixed(2),       term:30, apr:+(b+0.30+0.16).toFixed(2),         points:0.7, category:"refi",  minDown:"—",    minCredit:640 },
-    ];
-
-    const enriched = rows.map(r => ({
-      ...r,
-      monthlyPayment: +pmt(loan, r.rate, r.term).toFixed(2),
-      weekChange: r.type.includes("30-Year Fixed") && !r.type.includes("Refi") && !r.type.includes("FHA") && !r.type.includes("VA") && !r.type.includes("USDA") && !r.type.includes("Jumbo") ? (r30.change||0) : r.type.includes("15-Year Fixed") && !r.type.includes("Jumbo") && !r.type.includes("FHA") && !r.type.includes("VA") ? (r15.change||0) : r.type.includes("ARM") ? (rArm.change||0) : null,
-    }));
-
-    const history7 = (r30.history || []).slice(0, 8).map(h => ({ date: h.date, value: h.value })).reverse();
-
-    const response = {
-      source:    HAS_KEY ? "Federal Reserve (FRED) / Freddie Mac" : "Built-in rates",
-      live:      HAS_KEY,
-      updatedAt: new Date().toISOString(),
-      asOf:      r30.date,
-      summary: {
-        rate30yr:  { value: b,              change: r30.change    },
-        rate15yr:  { value: r15.value,      change: r15.change    },
-        rateArm:   { value: rArm.value,     change: rArm.change   },
-        treasury:  { value: t10.value,      change: t10.change    },
-        fedFunds:  { value: fedFunds.value, change: fedFunds.change },
-      },
-      rates: enriched,
-      history7,
-    };
-
-    cache.set("today_rates", response, 3600);
-    res.json(response);
-  } catch (err) {
-    console.error("GET /api/rates/today error:", err.message);
-    res.status(500).json({ error: err.message });
-  }
 });
 
 // ── /api/health
