@@ -155,7 +155,7 @@ app.use((req, res, next) => {
 
 app.get("/", (req, res) => {
   res.json({
-    service:  "MortgageWise Rates API",
+    service:  "RateCroft Rates API",
     version:  "1.0.0",
     live:     HAS_KEY,
     fred_key: HAS_KEY ? "✓ set" : "✗ missing — using fallback rates",
@@ -395,7 +395,7 @@ app.get("/api/refinance", (req, res) => {
 app.get("/api/health", (req, res) => {
   res.json({
     status:      "ok",
-    service:     "MortgageWise Rates API",
+    service:     "RateCroft Rates API",
     version:     "1.0.0",
     live:        HAS_KEY,
     fred_key:    HAS_KEY ? "✓ set" : "✗ missing — using fallback rates",
@@ -410,6 +410,6 @@ app.get("/api/health", (req, res) => {
 // ─────────────────────────────────────────────
 const PORT = process.env.PORT || 3001;
 app.listen(PORT, "0.0.0.0", () => {
-  console.log(`\n🏠 MortgageWise API  →  http://0.0.0.0:${PORT}`);
+  console.log(`\n🏠 RateCroft API  →  http://0.0.0.0:${PORT}`);
   console.log(`📡 Mode: ${HAS_KEY ? "LIVE (FRED API)" : "FALLBACK (no FRED key)"}\n`);
 });
