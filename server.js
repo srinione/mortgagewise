@@ -235,7 +235,7 @@ app.get("/api/rates/summary", async (req, res) => {
 });
 
 // ── /api/rates/today — Bankrate-style full daily rates table
-app.get("/api/rates/today", async (req, res) => {
+app.get("/api/today-rates", async (req, res) => {
   try {
     const cached = cache.get("today_rates");
     if (cached) return res.json(cached);
