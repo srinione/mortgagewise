@@ -23,7 +23,6 @@ console.log(`\n🔑 FRED API Key: ${HAS_KEY ? "✓ loaded" : "✗ missing — us
 const FRED_SERIES = {
   rate_30yr:  "MORTGAGE30US",
   rate_15yr:  "MORTGAGE15US",
-  rate_arm51: "MORTGAGE5US",
   treasury10: "DGS10",
   fed_funds:  "FEDFUNDS",
   prime_rate: "DPRIME",
@@ -178,14 +177,15 @@ app.get("/api/rates", async (req, res) => {
     const cached = cache.get("all_rates");
     if (cached) return res.json(cached);
 
-    const [r30, r15, rArm, t10, fedFunds, prime] = await Promise.all([
+    const [r30, r15, t10, fedFunds, prime] = await Promise.all([
       fetchFredSeries(FRED_SERIES.rate_30yr),
       fetchFredSeries(FRED_SERIES.rate_15yr),
-      fetchFredSeries(FRED_SERIES.rate_arm51),
       fetchFredSeries(FRED_SERIES.treasury10),
       fetchFredSeries(FRED_SERIES.fed_funds),
       fetchFredSeries(FRED_SERIES.prime_rate),
     ]);
+    // Derive 5/1 ARM from 30yr (MORTGAGE5US discontinued Nov 2022)
+    const rArm = { seriesId:'derived', value:+(r30.value-0.55).toFixed(2), change:r30.change, date:r30.date, history:[] };
 
     const response = buildRatesResponse(r30, r15, rArm, t10, fedFunds, prime);
     cache.set("all_rates", response, 3600);
@@ -202,12 +202,12 @@ app.get("/api/rates/summary", async (req, res) => {
     const cached = cache.get("summary");
     if (cached) return res.json(cached);
 
-    const [r30, r15, rArm, t10] = await Promise.all([
+    const [r30, r15, t10] = await Promise.all([
       fetchFredSeries(FRED_SERIES.rate_30yr),
       fetchFredSeries(FRED_SERIES.rate_15yr),
-      fetchFredSeries(FRED_SERIES.rate_arm51),
       fetchFredSeries(FRED_SERIES.treasury10),
     ]);
+    const rArm = { value:+(r30.value-0.55).toFixed(2), change:r30.change };
     const d = deriveRates(r30.value);
 
     const response = {
@@ -240,14 +240,15 @@ app.get("/api/today-rates", async (req, res) => {
     const cached = cache.get("today_rates");
     if (cached) return res.json(cached);
 
-    const [r30, r15, rArm, t10, fedFunds, prime] = await Promise.all([
+    const [r30, r15, t10, fedFunds, prime] = await Promise.all([
       fetchFredSeries(FRED_SERIES.rate_30yr),
       fetchFredSeries(FRED_SERIES.rate_15yr),
-      fetchFredSeries(FRED_SERIES.rate_arm51),
       fetchFredSeries(FRED_SERIES.treasury10),
       fetchFredSeries(FRED_SERIES.fed_funds),
       fetchFredSeries(FRED_SERIES.prime_rate),
     ]);
+    // Derive 5/1 ARM from 30yr (MORTGAGE5US discontinued Nov 2022)
+    const rArm = { seriesId:'derived', value:+(r30.value-0.55).toFixed(2), change:r30.change, date:r30.date, history:[] };
 
     const b = r30.value;
     const pmt = (principal, rate, years) => {
@@ -313,7 +314,6 @@ app.get("/api/rates/:type", async (req, res) => {
   const typeMap = {
     "30yr":       FRED_SERIES.rate_30yr,
     "15yr":       FRED_SERIES.rate_15yr,
-    "arm51":      FRED_SERIES.rate_arm51,
     "treasury10": FRED_SERIES.treasury10,
     "fedfunds":   FRED_SERIES.fed_funds,
     "prime":      FRED_SERIES.prime_rate,
